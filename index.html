@@ -225,6 +225,8 @@ void main(void) {
     </script>
 
 <script id="vertexShaderFlat" type="vertex">
+        #extension GL_OES_standard_derivatives : enable
+
         attribute vec3 aVertexPosition;
         attribute vec3 aFrontColor;
         attribute vec3 aVertexNormal;
@@ -292,7 +294,7 @@ void main(void) {
     var light1_locations = new Float32Array([0., 0., 0.]);
     var light2_locations = new Float32Array([30., 20., -25.]);
     
-    gl.getExtension("OES_standard_derivatives");
+    
 
 
     //*************************************************
@@ -303,6 +305,7 @@ void main(void) {
             gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
             gl.viewportWidth  = canvas.width;
             gl.viewportHeight = canvas.height;
+            gl.getExtension("OES_standard_derivatives");
         } 
         catch (e) {
         }
