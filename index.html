@@ -1,18 +1,73 @@
-<html>
-
+<!DOCTYPE html>
+<html lang="en">
 <head>
-<title>ICG WebGL &mdash; HW1</title>
-<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+  <meta charset="UTF-8" />
+  <title>ICG WebGL — HW1</title>
+  <script type="text/javascript" src="./js/glMatrix-0.9.5.min.js"></script>
+  <script type="text/javascript" src="./js/webgl-utils.js"></script>
 
-<script type="text/javascript" src="./js/glMatrix-0.9.5.min.js"></script>
-<script type="text/javascript" src="./js/webgl-utils.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background-color: #fff;
+    }
+
+    #canvas-container {
+      display: flex;
+      justify-content: center;
+      margin-top: 20px;
+    }
+
+    #ICG-canvas {
+      border: none;
+      background: #999;
+    }
+
+    #controls {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 2em;
+      padding: 20px;
+      width: 100%;
+      max-width: 1200px;
+      box-sizing: border-box;
+      background-color: #f2f2f2;
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      min-width: 250px;
+    }
+
+    .control-group span {
+      font-weight: bold;
+      margin-bottom: 0.3em;
+    }
+
+    .control-group input[type="range"] {
+      width: 100%;
+    }
+
+    .axis-labels {
+      font-weight: bold;
+      text-align: center;
+      margin-bottom: 0.5em;
+    }
+  </style>
+</head>
 
 <!-- 
     TODO HERE: 
     modify fragment shader or write another one
     to implement flat, gouraud and phong shading
  -->
-<script id="fragmentShader" type="fragment">
+<script id="fragmentShaderGouraud" type="fragment">
     #extension GL_OES_standard_derivatives : enable
     
     precision mediump float;
@@ -24,6 +79,59 @@
     }
 </script>
 
+
+<script id="fragmentShaderPhong" type="fragment">
+    precision mediump float;
+    
+    uniform vec3 lightLoc;
+    uniform vec3 lightLoc2;
+    uniform float Ka;
+    uniform float Kd;
+    uniform float Ks;
+    uniform float shininess;
+    
+    varying vec3 vNormal;
+    varying vec3 vPosition;
+    varying vec3 vColor;
+    
+    void main(void) {
+        vec3 N = normalize(vNormal);
+        vec3 V = normalize(-vPosition);
+    
+        vec3 lightColor = vec3(1.0);
+    
+        // Light 1
+        vec3 L1 = normalize(lightLoc - vPosition);
+        vec3 R1 = reflect(-L1, N);
+        float diff1 = max(dot(N, L1), 0.0);
+        float spec1 = pow(max(dot(R1, V), 0.0), shininess);
+    
+        // Light 2
+        vec3 L2 = normalize(lightLoc2 - vPosition);
+        vec3 R2 = reflect(-L2, N);
+        float diff2 = max(dot(N, L2), 0.0);
+        float spec2 = pow(max(dot(R2, V), 0.0), shininess);
+    
+        vec3 ambient = Ka * lightColor;
+        vec3 diffuse = Kd * (diff1 + diff2) * lightColor;
+        vec3 specular = Ks * (spec1 + spec2) * lightColor;
+    
+        vec3 result = (ambient + diffuse + specular) * vColor;
+        gl_FragColor = vec4(result, 1.0);
+    }
+    </script>
+    
+<script id="fragmentShaderFlat" type="fragment">
+        precision mediump float;
+        varying vec4 fragcolor;
+        
+        void main(void) {
+            gl_FragColor = fragcolor;
+        }
+        </script>
+        
+    
+    
 <!-- 
     TODO HERE:
     modify vertex shader or write another one
@@ -34,54 +142,132 @@
     only Teapot.json has extra attribute "vertexTextureCoords"
     which is used for texture mappping.
  -->
-<script id="vertexShader" type="vertex">
+<script id="vertexShaderGouraud" type="vertex">
+attribute vec3 aVertexPosition;
+attribute vec3 aFrontColor;
+attribute vec3 aVertexNormal;
+
+uniform mat4 uMVMatrix;
+uniform mat4 uPMatrix;
+
+uniform float Ka;
+uniform float Kd;
+uniform float Ks;
+
+uniform vec3 lightLoc;
+uniform vec3 lightLoc2;
+
+varying vec4 fragcolor;
+
+void main(void) {
+    vec3 lightColor = vec3(1.0, 1.0, 1.0);
+
+    // Transform to view space
+    vec3 mvVertex = (uMVMatrix * vec4(aVertexPosition, 1.0)).xyz;
+    mat3 normalMVMatrix = mat3(uMVMatrix);
+    vec3 mvNormal = normalize(normalMVMatrix * aVertexNormal);
+
+    // V, L, N, H
+    vec3 V = -normalize(mvVertex);
+    
+    
+    
+    vec3 N = normalize(mvNormal);
+
+    vec3 L1 = normalize(lightLoc - mvVertex);
+    vec3 H1 = normalize(L1 + V);
+
+    vec3 L2 = normalize(lightLoc2 - mvVertex);
+    vec3 H2 = normalize(L2 + V);
+
+    // 光照係數
+    // float kd = 0.6;
+    // float ks = 0.3;
+    float shininess = 32.0;
+
+    vec3 ambient  = Ka * lightColor;
+
+    vec3 diffuse1  = Kd * max(dot(N, L1), 0.0) * lightColor;
+    vec3 specular1 = Ks * pow(max(dot(N, H1), 0.0), shininess) * lightColor;
+
+    vec3 diffuse2  = Kd * max(dot(N, L2), 0.0) * lightColor;
+    vec3 specular2 = Ks * pow(max(dot(N, H2), 0.0), shininess) * lightColor;
+
+    vec3 color = ambient + diffuse1 + specular1 + diffuse2 + specular2;
+
+    // 可選：乘上模型顏色（如紅綠藍材質）
+    color *= aFrontColor;
+    fragcolor = vec4(color, 1.0);
+    gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+}
+</script>
+
+<script id="vertexShaderPhong" type="vertex">
     attribute vec3 aVertexPosition;
     attribute vec3 aFrontColor;
     attribute vec3 aVertexNormal;
-
+    
     uniform mat4 uMVMatrix;
     uniform mat4 uPMatrix;
     
-    // Ambient light coef.
-    uniform float Ka;
-    // light1 location (x,y,z)
-    uniform vec3 lightLoc;
-
-	varying vec4 fragcolor;
-
+    varying vec3 vNormal;
+    varying vec3 vPosition;
+    varying vec3 vColor;
+    
     void main(void) {
-        vec3 lightColor = vec3(1.0, 1.0, 1.0);
-
-        // Transform VertexPosition and VertexNormal to world coordinate system
-        vec3 mvVertex = (uMVMatrix * vec4(aVertexPosition, 1.0)).xyz;
-        mat3 normalMVMatrix = mat3(uMVMatrix);
-        vec3 mvNormal = normalMVMatrix * aVertexNormal;
-        
-        // V, N, L, H
-        vec3 V = -normalize(mvVertex);
-        vec3 N = normalize(mvNormal);
-        vec3 L = normalize(lightLoc - mvVertex);
-        vec3 H = normalize(L + V);
-
-        // Ambient, diffuse and specular coef.
-        float ka = Ka;
-        float kd = 0.6;
-        float ks = 0.3;
-
-        vec3 gouraud = vec3(0.5, 0.5, 0.5);
-        
-        // *TODO* 
-        //  Finish the formula of ambient, diffuse and specular
-        // vec3 ambient = 
-        // vec3 diffuse = 
-        // vec3 specular = 
-              
-        // gouraud = ambient + diffuse + specular;
-        
-        fragcolor = vec4(gouraud, 1.0);
-        gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+        vPosition = (uMVMatrix * vec4(aVertexPosition, 1.0)).xyz;
+        vNormal = mat3(uMVMatrix) * aVertexNormal;
+        vColor = aFrontColor;
+        gl_Position = uPMatrix * vec4(vPosition, 1.0);
     }
-</script>
+    </script>
+
+<script id="vertexShaderFlat" type="vertex">
+        attribute vec3 aVertexPosition;
+        attribute vec3 aFrontColor;
+        attribute vec3 aVertexNormal;
+        
+        uniform mat4 uMVMatrix;
+        uniform mat4 uPMatrix;
+        
+        uniform float Ka;
+        uniform float Kd;
+        uniform float Ks;
+        
+        uniform vec3 lightLoc;
+        uniform vec3 lightLoc2;
+        
+        varying vec4 fragcolor;
+        
+        void main(void) {
+            vec3 lightColor = vec3(1.0);
+            float shininess = 32.0;
+        
+            vec3 mvVertex = (uMVMatrix * vec4(aVertexPosition, 1.0)).xyz;
+            mat3 normalMatrix = mat3(uMVMatrix);
+            vec3 N = normalize(normalMatrix * aVertexNormal);
+            vec3 V = normalize(-mvVertex);
+        
+            vec3 L1 = normalize(lightLoc - mvVertex);
+            vec3 H1 = normalize(L1 + V);
+            vec3 diffuse1 = Kd * max(dot(N, L1), 0.0) * lightColor;
+            vec3 specular1 = Ks * pow(max(dot(N, H1), 0.0), shininess) * lightColor;
+        
+            vec3 L2 = normalize(lightLoc2 - mvVertex);
+            vec3 H2 = normalize(L2 + V);
+            vec3 diffuse2 = Kd * max(dot(N, L2), 0.0) * lightColor;
+            vec3 specular2 = Ks * pow(max(dot(N, H2), 0.0), shininess) * lightColor;
+        
+            vec3 ambient = Ka * lightColor;
+            vec3 finalColor = (ambient + diffuse1 + specular1 + diffuse2 + specular2) * aFrontColor;
+        
+            fragcolor = vec4(finalColor, 1.0);
+            gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+        }
+        </script>
+        
+    
+    
 
 <script type="text/javascript">
     // common variables
@@ -99,7 +285,12 @@
     var lastTime    = 0;
 
     var ka = 0.1;
-    var light_locations = new Float32Array([30., 20., -25.]);
+    var kd = 0.1;
+    var ks = 0.1;
+    var light1_locations = new Float32Array([0., 0., 0.]);
+    var light2_locations = new Float32Array([30., 20., -25.]);
+    
+    gl.getExtension("OES_standard_derivatives");
 
 
     //*************************************************
@@ -158,8 +349,8 @@
     }
 
     function initShaders() {
-        var fragmentShader = getShader(gl, "fragmentShader");
-        var vertexShader   = getShader(gl, "vertexShader");
+        var fragmentShader = getShader(gl, "fragmentShaderFlat");
+        var vertexShader   = getShader(gl, "vertexShaderFlat");
 
         shaderProgram = gl.createProgram();
         gl.attachShader(shaderProgram, vertexShader);
@@ -180,7 +371,10 @@
         gl.enableVertexAttribArray(shaderProgram.vertexNormalAttribute);
 
         gl.uniform1f(gl.getUniformLocation(shaderProgram, "Ka"), ka);
-        gl.uniform3fv(gl.getUniformLocation(shaderProgram, "lightLoc"), light_locations);
+        gl.uniform1f(gl.getUniformLocation(shaderProgram, "Kd"), kd);
+        gl.uniform1f(gl.getUniformLocation(shaderProgram, "Ks"), ks);
+        gl.uniform3fv(gl.getUniformLocation(shaderProgram, "lightLoc"), light1_locations);
+        gl.uniform3fv(gl.getUniformLocation(shaderProgram, "lightLoc2"), light2_locations);
 
         shaderProgram.pMatrixUniform  = gl.getUniformLocation(shaderProgram, "uPMatrix");
         shaderProgram.mvMatrixUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
@@ -296,8 +490,10 @@
 
         // Setup ambient light and light position
         gl.uniform1f(gl.getUniformLocation(shaderProgram, "Ka"), ka);
-        gl.uniform3fv(gl.getUniformLocation(shaderProgram, "lightLoc"), light_locations);
-
+        gl.uniform1f(gl.getUniformLocation(shaderProgram, "Kd"), kd);
+        gl.uniform1f(gl.getUniformLocation(shaderProgram, "Ks"), ks);
+        gl.uniform3fv(gl.getUniformLocation(shaderProgram, "lightLoc"), light1_locations);
+        gl.uniform3fv(gl.getUniformLocation(shaderProgram, "lightLoc2"), light2_locations);
         gl.drawArrays(gl.TRIANGLES, 0, teapotVertexPositionBuffer.numItems);
     }
 
@@ -328,7 +524,7 @@
 
         tick();
     }
-
+    
 
     //*************************************************
     // Parsing parameters
@@ -337,10 +533,24 @@
         ka = document.getElementById("am_ka").value;
     }
 
-    function update_light_location(){
-        light_locations[0] = document.getElementById("llocX").value;
-        light_locations[1] = document.getElementById("llocY").value;
-        light_locations[2] = document.getElementById("llocZ").value;
+    function update_diffuse_light(){
+        kd = document.getElementById("di_kd").value;
+    }
+
+    function update_specular_light(){
+        ks = document.getElementById("sp_ks").value;
+    }
+
+    function update_light1_location(){
+        light1_locations[0] = document.getElementById("llocX").value;
+        light1_locations[1] = document.getElementById("llocY").value;
+        light1_locations[2] = document.getElementById("llocZ").value;
+    }
+
+    function update_light2_location(){
+        light2_locations[0] = document.getElementById("lloc2X").value;
+        light2_locations[1] = document.getElementById("lloc2Y").value;
+        light2_locations[2] = document.getElementById("lloc2Z").value;
     }
     
     function update_trans(){
@@ -359,63 +569,133 @@
         return vec3.create([rx, ry, rz]);
     }
 
+    function update_shader() {
+        // 1. Get selected shading mode
+        const mode = document.getElementById("shadingMode").value;
+
+        // 2. Decide shader IDs
+        let vertexShaderId = "", fragmentShaderId = "";
+        if (mode === "flat") {
+            vertexShaderId = "vertexShaderFlat";
+            fragmentShaderId = "fragmentShaderFlat";
+        } else if (mode === "phong") {
+            vertexShaderId = "vertexShaderPhong";
+            fragmentShaderId = "fragmentShaderPhong";
+        } else {
+            vertexShaderId = "vertexShader";
+            fragmentShaderId = "fragmentShader";
+        }
+
+        // 3. Compile shaders
+        const vertexShader = getShader(gl, vertexShaderId);
+        const fragmentShader = getShader(gl, fragmentShaderId);
+
+        // 4. Create new program
+        const newProgram = gl.createProgram();
+        gl.attachShader(newProgram, vertexShader);
+        gl.attachShader(newProgram, fragmentShader);
+        gl.linkProgram(newProgram);
+
+        if (!gl.getProgramParameter(newProgram, gl.LINK_STATUS)) {
+            alert("Shader program failed to link.");
+            return;
+        }
+
+        // 5. Use new program
+        gl.useProgram(newProgram);
+        shaderProgram = newProgram;
+
+        // 6. Bind attributes
+        shaderProgram.vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexPosition");
+        gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+
+        shaderProgram.vertexNormalAttribute = gl.getAttribLocation(shaderProgram, "aVertexNormal");
+        gl.enableVertexAttribArray(shaderProgram.vertexNormalAttribute);
+
+        shaderProgram.vertexFrontColorAttribute = gl.getAttribLocation(shaderProgram, "aFrontColor");
+        gl.enableVertexAttribArray(shaderProgram.vertexFrontColorAttribute);
+
+        // 7. Bind uniforms
+        shaderProgram.pMatrixUniform = gl.getUniformLocation(shaderProgram, "uPMatrix");
+        shaderProgram.mvMatrixUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
+
+        shaderProgram.KaUniform = gl.getUniformLocation(shaderProgram, "Ka");
+        shaderProgram.KdUniform = gl.getUniformLocation(shaderProgram, "Kd");
+        shaderProgram.KsUniform = gl.getUniformLocation(shaderProgram, "Ks");
+
+        shaderProgram.shininessUniform = gl.getUniformLocation(shaderProgram, "shininess");
+        shaderProgram.lightLocUniform = gl.getUniformLocation(shaderProgram, "lightLoc");
+        shaderProgram.lightLoc2Uniform = gl.getUniformLocation(shaderProgram, "lightLoc2");
+
+        // 8. Set initial uniform values
+        gl.uniform1f(shaderProgram.KaUniform, ka);
+        gl.uniform1f(shaderProgram.KdUniform, kd);
+        gl.uniform1f(shaderProgram.KsUniform, ks);
+        gl.uniform1f(shaderProgram.shininessUniform, 32.0);
+        gl.uniform3fv(shaderProgram.lightLocUniform, light_locations);
+        gl.uniform3fv(shaderProgram.lightLoc2Uniform, light_locations2);
+    }
+</script>
+
 </script>
 </head>
-
 <body onload="webGLStart();">
-    <p style="position: absolute; right: 2%; top:6%; ">
-        <canvas id="ICG-canvas" style="border: none;" width="1060" height="590" ></canvas>
-    </p>
-
-    <p style="position: absolute; left: 1%; top: 1%; max-width: 30%; min-width: 30%; ">
-
-        <p>
-            <label for="shading">Gouraud shading</label>
-        </p>
-
-        </br>
-        <span>Ambient Light</span>
-        <table>
-            <tr>
-                <td>Ka: <input style="max-width: 70%; vertical-align: middle;" id="am_ka" type="range" autocomplete="off" value="0.1" max="1." min="0." step="0.05" oninput="update_ambient_light()"></td>
-            </tr>
-        </table>
-        </br>
-        <span>Light 0</span>
-        <table>
-            <tr>
-                <td>X: <input style="max-width: 70%; vertical-align: middle;" id="llocX" type="range" autocomplete="off" value="30." max="40." min="-40." oninput="update_light_location()"></td>
-                <td>Y: <input style="max-width: 70%; vertical-align: middle;" id="llocY" type="range" autocomplete="off" value="20." max="40." min="-40." oninput="update_light_location()"></td>
-                <td>Z: <input style="max-width: 70%; vertical-align: middle;" id="llocZ" type="range" autocomplete="off" value="-25." max="0." min="-75." oninput="update_light_location()"></td>
-            </tr>
-        </table>
-        </br>
-        </br>
-        </br>
-
-        <span>Object</span>
-        <table>
-            <tr>
-            <th></th>
-            <th>X axis</th>
-            <th>Y axis</th>
-            <th>Z axis</th>
-            </tr>
-            <tr>
-                <td>Trans.</td>
-                <td><input id="transX" type="range" autocomplete="off" value="0." max="50." min="-50." oninput="update_trans()"></td>
-                <td><input id="transY" type="range" autocomplete="off" value="0." max="50." min="-50." oninput="update_trans()"></td>
-                <td><input id="transZ" type="range" autocomplete="off" value="-50." max="0." min="-120." oninput="update_trans()"></td>
-            </tr>
-            <tr>
-                <td>Rotate</td>
-                <td><input id="rotateX" type="range" autocomplete="off" value="0." max="180." min="-180." oninput="update_rotate()"></td>
-                <td><input id="rotateY" type="range" autocomplete="off" value="0." max="180." min="-180." oninput="update_rotate()"></td>
-                <td><input id="rotateZ" type="range" autocomplete="off" value="0." max="180." min="-180." oninput="update_rotate()"></td>
-            </tr>
-        </table>
-    </p>
-
-</body>
-
-</html>
+    <div id="canvas-container">
+      <canvas id="ICG-canvas" width="1060" height="590"></canvas>
+    </div>
+  
+    <div id="controls">
+        <!-- Shading Mode -->
+        <div class="control-group full">
+          <label><strong>Shading:</strong>
+            <select id="shadingMode" onchange="update_shader()">
+              <option value="gouraud">Gouraud</option>
+              <option value="flat">Flat</option>
+              <option value="phong">Phong</option>
+            </select>
+          </label>
+        </div>
+      
+        <!-- Light Parameters -->
+        <fieldset class="control-group">
+          <legend>Light Parameters</legend>
+          <label>Ka: <input id="am_ka" type="range" min="0" max="1" step="0.05" oninput="update_ambient_light()"></label>
+          <label>Kd: <input id="di_kd" type="range" min="0" max="1" step="0.05" oninput="update_diffuse_light()"></label>
+          <label>Ks: <input id="sp_ks" type="range" min="0" max="1" step="0.05" oninput="update_specular_light()"></label>
+        </fieldset>
+      
+        <!-- Light 1 -->
+        <fieldset class="control-group">
+          <legend>Light 1 Position</legend>
+          <label>X: <input id="llocX" type="range" min="-40" max="40" step="1" oninput="update_light1_location()"></label>
+          <label>Y: <input id="llocY" type="range" min="-40" max="40" step="1" oninput="update_light1_location()"></label>
+          <label>Z: <input id="llocZ" type="range" min="-75" max="0" step="1" oninput="update_light1_location()"></label>
+        </fieldset>
+      
+        <!-- Light 2 -->
+        <fieldset class="control-group">
+          <legend>Light 2 Position</legend>
+          <label>X: <input id="lloc2X" type="range" min="-40" max="40" step="1" oninput="update_light2_location()"></label>
+          <label>Y: <input id="lloc2Y" type="range" min="-40" max="40" step="1" oninput="update_light2_location()"></label>
+          <label>Z: <input id="lloc2Z" type="range" min="-75" max="0" step="1" oninput="update_light2_location()"></label>
+        </fieldset>
+      
+        <!-- Translate -->
+        <fieldset class="control-group">
+          <legend>Object Translate</legend>
+          <label>X: <input id="transX" type="range" min="-50" max="50" step="1" oninput="update_trans()"></label>
+          <label>Y: <input id="transY" type="range" min="-50" max="50" step="1" oninput="update_trans()"></label>
+          <label>Z: <input id="transZ" type="range" min="-120" max="0" step="1" oninput="update_trans()"></label>
+        </fieldset>
+      
+        <!-- Rotate -->
+        <fieldset class="control-group">
+          <legend>Object Rotate</legend>
+          <label>X: <input id="rotateX" type="range" min="-180" max="180" step="1" oninput="update_rotate()"></label>
+          <label>Y: <input id="rotateY" type="range" min="-180" max="180" step="1" oninput="update_rotate()"></label>
+          <label>Z: <input id="rotateZ" type="range" min="-180" max="180" step="1" oninput="update_rotate()"></label>
+        </fieldset>
+      </div>
+      
+  </body>
+  </html>
