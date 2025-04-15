@@ -122,10 +122,12 @@
     </script>
     
 <script id="fragmentShaderFlat" type="fragment">
+        #extension GL_OES_standard_derivatives : enable
         precision mediump float;
         varying vec4 fragcolor;
         
         void main(void) {
+            vec3 dx = dFdx(mvVertex);
             gl_FragColor = fragcolor;
         }
         </script>
