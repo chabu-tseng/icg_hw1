@@ -13,29 +13,103 @@
     modify fragment shader or write another one
     to implement flat, gouraud and phong shading
  -->
-<script id="fragmentShader" type="fragment">
-    #extension GL_OES_standard_derivatives : enable 
+ <script id="fragmentShader" type="fragment">
+    #extension GL_OES_standard_derivatives : enable
 
     precision mediump float;
-
+    
     varying vec3 shading_mode;
     varying vec3 vertexColor;
     varying vec3 fragPosition;
     varying vec3 fragNormal;
+    
     varying vec3 lightLocations[3];
     varying vec3 lightColors[3];
     varying vec3 lightKdKsCDs[3];
     varying float Ka_val;
     varying vec3 ambient_lightColor;
-
-    varying vec4 fragcolor;   // for gouraud shading
-
+    
+    varying vec4 fragcolor;
+    
+    // Clipping variables from vertex shader
+    varying vec3 clipPlaneValues;
+    varying vec3 useClipPlaneFlags;
+    
     void main(void) {
-        if(shading_mode[0] == 1.){                      // gouraud shading;
+        // Apply clipping if enabled
+        if ((useClipPlaneFlags.x > 0.5 && fragPosition.x > clipPlaneValues.x) || 
+            (useClipPlaneFlags.y > 0.5 && fragPosition.y > clipPlaneValues.y) || 
+            (useClipPlaneFlags.z > 0.5 && fragPosition.z > clipPlaneValues.z)) {
+            discard; // Discard fragment if it's beyond any enabled clipping plane
+        }
+    
+        vec3 finalColor = vec3(0.0);
+    
+        if(shading_mode[0] == 0.0){ // Flat shading with face normal (dFdx/dFdy)
+            vec3 pos = fragPosition;
+    
+            // Face normal via cross product of screen-space derivatives
+            vec3 dx = dFdx(pos);
+            vec3 dy = dFdy(pos);
+            vec3 faceNormal = normalize(cross(dx, dy));
+    
+            vec3 V = -normalize(pos);
+            vec3 ambient = Ka_val * ambient_lightColor;
+    
+            for(int i = 0; i < 3; ++i){
+                float kd = lightKdKsCDs[i][0];
+                float ks = lightKdKsCDs[i][1];
+                float CosineDegree = lightKdKsCDs[i][2];
+    
+                vec3 L = normalize(lightLocations[i] - pos);
+                vec3 H = normalize(L + V);
+    
+                float NdotL = max(dot(faceNormal, L), 0.0);
+                float NdotH = max(dot(faceNormal, H), 0.0);
+    
+                vec3 diffuse = kd * lightColors[i] * NdotL;
+                vec3 specular = ks * lightColors[i] * pow(NdotH, CosineDegree);
+                if(NdotL <= 0.0) specular = vec3(0.0);
+    
+                finalColor += vertexColor * (ambient + diffuse) + specular;
+            }
+    
+            gl_FragColor = vec4(finalColor, 1.0);
+        }
+    
+        else if(shading_mode[0] == 1.0){ // Gouraud shading
             gl_FragColor = fragcolor;
         }
+    
+        else if(shading_mode[0] == 2.0){ // Phong shading
+            vec3 V = -normalize(fragPosition);
+            vec3 N = normalize(fragNormal);
+            vec3 ambient = Ka_val * ambient_lightColor;
+    
+            for(int i = 0; i < 3; ++i){
+                float kd = lightKdKsCDs[i][0];
+                float ks = lightKdKsCDs[i][1];
+                float CosineDegree = lightKdKsCDs[i][2];
+    
+                vec3 L = normalize(lightLocations[i] - fragPosition);
+                vec3 H = normalize(L + V);
+    
+                float NdotL = max(dot(N, L), 0.0);
+                float NdotH = max(dot(N, H), 0.0);
+    
+                vec3 diffuse = kd * lightColors[i] * NdotL;
+                vec3 specular = ks * lightColors[i] * pow(NdotH, CosineDegree);
+                if(NdotL <= 0.0) specular = vec3(0.0);
+    
+                finalColor += vertexColor * (ambient + diffuse) + specular;
+            }
+    
+            gl_FragColor = vec4(finalColor, 1.0);
+        }
     }
-</script>
+    </script>
+    
+    
 
 <!-- 
     TODO HERE:
@@ -47,7 +121,7 @@
     only Teapot.json has extra attribute "vertexTextureCoords"
     which is used for texture mappping.
  -->
-<script id="vertexShader" type="vertex">
+ <script id="vertexShader" type="vertex">
     attribute vec3 aVertexPosition;
     attribute vec3 aFrontColor;
     attribute vec3 aVertexNormal;
@@ -59,7 +133,15 @@
     uniform mat4 uPMatrix;
     uniform float Ka;
     uniform vec3 ambient_color;
-    
+
+    // Clipping plane uniforms
+    uniform bool useClipX;
+    uniform bool useClipY;
+    uniform bool useClipZ;
+    uniform float clipX;
+    uniform float clipY;
+    uniform float clipZ;
+
     uniform int mode;
     uniform float volume;
 
@@ -67,6 +149,7 @@
     varying vec3 fragPosition;
     varying vec3 fragNormal;
     varying vec3 shading_mode;
+
     varying vec3 lightLocations[3];
     varying vec3 lightColors[3];
     varying vec3 lightKdKsCDs[3];
@@ -75,62 +158,64 @@
 
     varying vec4 fragcolor;
 
+    // Add clipping variables for fragment shader
+    varying vec3 clipPlaneValues;
+    varying vec3 useClipPlaneFlags;
+
     void main(void) {
         Ka_val = Ka;
         ambient_lightColor = ambient_color;
-        for(int i=0; i<3 ; ++i){
+        for(int i = 0; i < 3; ++i){
             lightLocations[i] = lightLoc[i];
             lightColors[i] = lightColor[i];
             lightKdKsCDs[i] = lightKdKsCD[i];
         }
-        
         shading_mode = vec3(mode);
 
-        vec3 vertex_copy = aVertexPosition;
-        vertex_copy.x *= 1.+volume;
-        vertex_copy.y *= 1.+volume;
-        vertex_copy.z *= 1.+volume;
+        // Pass clipping information to fragment shader
+        clipPlaneValues = vec3(clipX, clipY, clipZ);
+        useClipPlaneFlags = vec3(float(useClipX), float(useClipY), float(useClipZ));
 
-        if(mode == 1){    
-            vec3 phong = vec3(0., 0., 0.);
+        vec3 vertex_copy = aVertexPosition * (1.0 + volume);
+        vec3 mvVertex = (uMVMatrix * vec4(vertex_copy, 1.0)).xyz;
+        vec3 mvNormal = normalize(mat3(uMVMatrix) * aVertexNormal);
 
+        fragPosition = mvVertex;
+        fragNormal = mvNormal;
+        vertexColor = aFrontColor;
 
-            vec3 mvVertex = (uMVMatrix * vec4(vertex_copy, 1.0)).xyz;
-
-
-            vec3 mvNormal = mat3(uMVMatrix) * aVertexNormal;
-
-            float ka = Ka; 
+        if(mode == 1){ // Gouraud shading
             vec3 V = -normalize(mvVertex);
             vec3 N = normalize(mvNormal);
-            vec3 ambient = ka * ambient_color;
+            vec3 ambient = Ka * ambient_color;
+            vec3 finalColor = vec3(0.0);
 
-            for(int i=0 ; i<3 ; ++i){
-                float kd = lightKdKsCD[i][0], ks = lightKdKsCD[i][1], CosineDegree = lightKdKsCD[i][2];
+            for(int i=0; i<3; ++i){
+                float kd = lightKdKsCD[i][0];
+                float ks = lightKdKsCD[i][1];
+                float CosineDegree = lightKdKsCD[i][2];
 
                 vec3 L = normalize(lightLoc[i] - mvVertex);
-                vec3 H = normalize(L+V);
+                vec3 H = normalize(L + V);
 
-                vec3 Id = lightColor[i] * max(dot(L, N), 0.);
-                vec3 diffuse = kd * Id;
-    
-                vec3 Is = lightColor[i] * pow(max(dot(H, N), 0.), CosineDegree);
-                vec3 specular = ks * Is;
-    
-                if(dot(L, N) < 0.){
-                    specular = vec3(0., 0., 0.);
-                }
-                phong += aFrontColor * (ambient + diffuse) + specular;
+                float NdotL = max(dot(N, L), 0.0);
+                float NdotH = max(dot(N, H), 0.0);
 
+                vec3 diffuse = kd * lightColor[i] * NdotL;
+                vec3 specular = ks * lightColor[i] * pow(NdotH, CosineDegree);
+                if(NdotL <= 0.0) specular = vec3(0.0);
+
+                finalColor += aFrontColor * (ambient + diffuse) + specular;
             }
-            fragcolor = vec4(phong, 1.0);
+
+            fragcolor = vec4(finalColor, 1.0);
         }
+
         gl_Position = uPMatrix * uMVMatrix * vec4(vertex_copy, 1.0);
-        
     }
-
-
-</script>
+    </script>
+    
+    
 
 <script type="text/javascript">
     // common variables
@@ -144,7 +229,7 @@
     var mvMatrix = mat4.create();
     var pMatrix  = mat4.create();
     // object parameters
-    var obj_names = ["Teapot.json"];
+    var obj_names = ["Teapot.json","Kangaroo.json" , "Car_road.json"];
     var obj_vec = [];
     var obj_default_trans = [vec3.create([0., 0., -15.]), vec3.create([15., 0., -37.]),  vec3.create([-15., -1., -37.])];
     var obj_default_rotate = [vec3.create([0., 0., -0.]), vec3.create([-90., 0., -50.]), vec3.create([-90., 0., -50.])];
@@ -161,7 +246,31 @@
     var lastTime = 0;
     var random_light_flag = false;
     var transparent = 1.0;
+    var active_obj_id = 0;
+    var clipEnabled = {x: false, y: false, z: false};
+    var clipValues = {x: 0, y: 0, z: 0};
 
+
+    // function update_active_obj() {
+    // active_obj_id = parseInt(document.getElementById("activeObject").value);
+
+    // document.getElementById(active_obj_id + "_shearX").value = obj_vec[active_obj_id].shear_vec[0];
+    // document.getElementById(active_obj_id + "_shearY").value = obj_vec[active_obj_id].shear_vec[1];
+    // document.getElementById(active_obj_id + "_shearZ").value = obj_vec[active_obj_id].shear_vec[2];
+    // }
+
+    function toggleClipping(axis) {
+        var checkboxId = "enable_clip_" + axis;
+        clipEnabled[axis] = document.getElementById(checkboxId).checked;
+        
+        // Update uniform in shader
+        gl.uniform1i(gl.getUniformLocation(shaderProgram, "useClip" + axis.toUpperCase()), clipEnabled[axis]);
+        
+        // If enabling, also update the clipping value
+        if (clipEnabled[axis]) {
+            updateClipping(axis);
+        }
+    }
 
     //*************************************************
     // Initialization functions
@@ -251,6 +360,13 @@
         gl.uniform1f(gl.getUniformLocation(shaderProgram, "Ka"), ka);
         gl.uniform3fv(gl.getUniformLocation(shaderProgram, "ambient_color"), ambiet_light_color);
         
+        gl.uniform1i(gl.getUniformLocation(shaderProgram, "useClipX"), false);
+        gl.uniform1i(gl.getUniformLocation(shaderProgram, "useClipY"), false);
+        gl.uniform1i(gl.getUniformLocation(shaderProgram, "useClipZ"), false);
+        gl.uniform1f(gl.getUniformLocation(shaderProgram, "clipX"), 0.0);
+        gl.uniform1f(gl.getUniformLocation(shaderProgram, "clipY"), 0.0);
+        gl.uniform1f(gl.getUniformLocation(shaderProgram, "clipZ"), 0.0);
+
         var context = new AudioContext();
         var audio = document.getElementById('myAudio');
         var audioSrc = context.createMediaElementSource(audio);
@@ -322,7 +438,15 @@
         gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
         gl.clearColor(ka*ambiet_light_color[0], ka*ambiet_light_color[1], ka*ambiet_light_color[2], transparent);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        
 
+        gl.uniform1i(gl.getUniformLocation(shaderProgram, "useClipX"), clipEnabled.x);
+        gl.uniform1i(gl.getUniformLocation(shaderProgram, "useClipY"), clipEnabled.y);
+        gl.uniform1i(gl.getUniformLocation(shaderProgram, "useClipZ"), clipEnabled.z);
+        gl.uniform1f(gl.getUniformLocation(shaderProgram, "clipX"), clipValues.x);
+        gl.uniform1f(gl.getUniformLocation(shaderProgram, "clipY"), clipValues.y);
+        gl.uniform1f(gl.getUniformLocation(shaderProgram, "clipZ"), clipValues.z);
+        
         for(var i=0 ; i<3 ; ++i)
         {
 
@@ -386,6 +510,7 @@
             loadObj(obj_vec[i]);
         }
 
+
         gl.clearColor(ka*ambiet_light_color[0], ka*ambiet_light_color[1], ka*ambiet_light_color[2], transparent);
         gl.enable(gl.DEPTH_TEST);
 
@@ -435,6 +560,29 @@
         var rz = document.getElementById(objid + "_rotateZ").value;
         obj_vec[objid].rotate_vec = vec3.create([rx, ry, rz]);
     }
+
+    function update_scale(objid){
+        var sx = parseFloat(document.getElementById(objid + "_scaleX").value);
+        var sy = parseFloat(document.getElementById(objid + "_scaleY").value);
+        var sz = parseFloat(document.getElementById(objid + "_scaleZ").value);
+        obj_vec[objid].scale_vec = vec3.create([sx, sy, sz]);
+    }
+
+    function update_shear(objid) {
+        var shx = parseFloat(document.getElementById(objid + "_shearX").value);
+        var shy = parseFloat(document.getElementById(objid + "_shearY").value);
+        var shz = parseFloat(document.getElementById(objid + "_shearZ").value);
+        
+        obj_vec[objid].shear_vec = vec3.create([shx, shy, shz]);
+    }
+
+    function updateClipping(axis) {
+        var sliderId = "clip_" + axis;
+        clipValues[axis] = parseFloat(document.getElementById(sliderId).value);
+        
+        // Update uniform in shader
+        gl.uniform1f(gl.getUniformLocation(shaderProgram, "clip" + axis.toUpperCase()), clipValues[axis]);
+    }
     
 </script>
 </head>
@@ -442,57 +590,142 @@
 <body onload="webGLStart();">
     <audio style="position: absolute; right: 4%; bottom: 30%; z-index: 2;" id="myAudio"></audio>
 
-    <p style="position: absolute; right: 2%; top:6%; ">
-        <canvas id="ICG-canvas" style="border: none;" width="1060" height="590" ></canvas>
-    </p>
+    <div style="display: flex; flex-direction: column; align-items: center;">
 
-    <p style="position: absolute; left: 1%; top: 1%; max-width: 30%; min-width: 30%; ">
+        <!-- 上方 Canvas 畫面 -->
+        <div style="position: fixed; top: 0; left: 0; width: 100%; z-index: 10; background: white;">
+            <canvas id="ICG-canvas" width="1060" height="590"
+              style="display: block; margin: 0 auto;">
+            </canvas>
+          </div>
 
-        <p>
-            <label for="shading">Gouraud shading</label>
-        </p>
+          <div id="page-content"
+          style="margin-top: 590px; padding: 30px; background: white; min-height: 100vh;">
+          
+        <!-- 下方控制面板 -->
+        <div id="control-panel" style="margin-top: 20px; width: 90%; display: flex; flex-wrap: wrap; justify-content: space-around; font-family: sans-serif;">
+            <!-- 將你原本的控制項全搬到這個 div 裡 -->
+            <!-- <div style="min-width: 200px; margin: 10px;">
+                <strong>Control Object</strong>
+                <select id="activeObject" onchange="update_active_obj()">
+                  <option value="0">Object 0</option>
+                  <option value="1">Object 1</option>
+                  <option value="2">Object 2</option>
+                </select>
+              </div> -->
+            
+            
+            <div id="control-panel" style="z-index: 10; position: relative;">
+                <label for="shading"><strong>Shading Mode</strong></label>
+                <select id="shading" onchange="update_mode()">
+                    <option value="0">Flat</option>
+                    <option value="1" selected>Gouraud</option>
+                    <option value="2">Phong</option>
+                </select>
+            </div>
 
-        </br>
-        <span>Ambient Light</span>
-        <table>
-            <tr>
-                <td>Ka: <input style="max-width: 70%; vertical-align: middle;" id="am_ka" type="range" autocomplete="off" value="0.1" max="1." min="0." step="0.05" oninput="update_ambient_light(0)"></td>
-            </tr>
-        </table>
-        </br>
-        <span>Light 0</span>
-        <table>
-            <tr>
-                <td>X: <input style="max-width: 70%; vertical-align: middle;" id="0_llocX" type="range" autocomplete="off" value="0." max="20." min="-20." oninput="update_light_location(0)"></td>
-                <td>Y: <input style="max-width: 70%; vertical-align: middle;" id="0_llocY" type="range" autocomplete="off" value="5." max="20." min="-20." oninput="update_light_location(0)"></td>
-                <td>Z: <input style="max-width: 70%; vertical-align: middle;" id="0_llocZ" type="range" autocomplete="off" value="-10." max="0." min="-75." oninput="update_light_location(0)"></td>
-            </tr>
-        </table>
-        </br>
-        </br>
-        </br>
+            <div style="min-width: 280px; margin: 10px;">
+                <strong>Ambient Light</strong><br/>
+                Ka: <input id="am_ka" type="range" value="0.1" max="1." min="0." step="0.05" oninput="update_ambient_light(0)">
+            </div>
 
-        <span>Object</span>
-        <table>
-            <tr>
-            <th></th>
-            <th>X axis</th>
-            <th>Y axis</th>
-            <th>Z axis</th>
-            </tr>
-            <tr>
-                <td>Trans.</td>
-                <td><input id="0_transX" type="range" autocomplete="off" value="0." max="50." min="-50." oninput="update_trans(0)"></td>
-                <td><input id="0_transY" type="range" autocomplete="off" value="0." max="50." min="-50." oninput="update_trans(0)"></td>
-                <td><input id="0_transZ" type="range" autocomplete="off" value="-15." max="0." min="-120." oninput="update_trans(0)"></td>
-            </tr>
-            <tr>
-                <td>Rotate</td>
-                <td><input id="0_rotateX" type="range" autocomplete="off" value="0." max="180." min="-180." oninput="update_rotate(0)"></td>
-                <td><input id="0_rotateY" type="range" autocomplete="off" value="0." max="180." min="-180." oninput="update_rotate(0)"></td>
-                <td><input id="0_rotateZ" type="range" autocomplete="off" value="0." max="180." min="-180." oninput="update_rotate(0)"></td>
-            </tr>
-        </table>
-    </p>
+            <!-- 每個光源分開包成 div 區塊 -->
+            <div id="light-group" style="display: flex; justify-content: center; gap: 20px; flex-wrap: wrap;">
+            <div style="min-width: 280px; margin: 10px;">
+                <strong>Light 0</strong>
+                <div>X: <input id="0_llocX" type="range" min="-20" max="20" value="0" oninput="update_light_location(0)"></div>
+                <div>Y: <input id="0_llocY" type="range" min="-20" max="20" value="5" oninput="update_light_location(0)"></div>
+                <div>Z: <input id="0_llocZ" type="range" min="-75" max="0" value="-10" oninput="update_light_location(0)"></div>
+                <div>R: <input id="0_lR" type="range" min="0" max="1" step="0.1" value="1" oninput="update_light_color(0)"></div>
+                <div>G: <input id="0_lG" type="range" min="0" max="1" step="0.1" value="1" oninput="update_light_color(0)"></div>
+                <div>B: <input id="0_lB" type="range" min="0" max="1" step="0.1" value="1" oninput="update_light_color(0)"></div>
+            </div>
+
+            <!-- Light 1 與 Light 2 同樣結構 -->
+            <div style="min-width: 280px; margin: 10px;">
+                <strong>Light 1</strong>
+                <div>X: <input id="1_llocX" type="range" min="-20" max="20" value="0" oninput="update_light_location(1)"></div>
+                <div>Y: <input id="1_llocY" type="range" min="-20" max="20" value="5" oninput="update_light_location(1)"></div>
+                <div>Z: <input id="1_llocZ" type="range" min="-75" max="0" value="-10" oninput="update_light_location(1)"></div>
+                <div>R: <input id="1_lR" type="range" min="0" max="1" step="0.1" value="1" oninput="update_light_color(1)"></div>
+                <div>G: <input id="1_lG" type="range" min="0" max="1" step="0.1" value="1" oninput="update_light_color(1)"></div>
+                <div>B: <input id="1_lB" type="range" min="0" max="1" step="0.1" value="1" oninput="update_light_color(1)"></div>
+                <!-- ...與上面 Light 0 類似的結構 -->
+            </div>
+
+            <div style="min-width: 280px; margin: 10px;">
+                <strong>Light 2</strong>
+                <div>X: <input id="2_llocX" type="range" min="-20" max="20" value="0" oninput="update_light_location(2)"></div>
+                <div>Y: <input id="2_llocY" type="range" min="-20" max="20" value="5" oninput="update_light_location(2)"></div>
+                <div>Z: <input id="2_llocZ" type="range" min="-75" max="0" value="-10" oninput="update_light_location(2)"></div>
+                <div>R: <input id="2_lR" type="range" min="0" max="1" step="0.1" value="1" oninput="update_light_color(2)"></div>
+                <div>G: <input id="2_lG" type="range" min="0" max="1" step="0.1" value="1" oninput="update_light_color(2)"></div>
+                <div>B: <input id="2_lB" type="range" min="0" max="1" step="0.1" value="1" oninput="update_light_color(2)"></div>
+                <!-- ...與上面 Light 0 類似的結構 -->
+            </div>
+
+            <!-- 每個 Object 一組控制區塊 -->
+            <div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 20px;">
+            
+                <!-- Object 0 -->
+                <div style="min-width: 280px; margin: 10px;">
+                <strong>Object 0 Transform</strong>
+                <div>Trans X: <input id="0_transX" type="range" min="-50" max="50" value="0" oninput="update_trans(0)"></div>
+                <div>Trans Y: <input id="0_transY" type="range" min="-50" max="50" value="0" oninput="update_trans(0)"></div>
+                <div>Trans Z: <input id="0_transZ" type="range" min="-120" max="0" value="-15" oninput="update_trans(0)"></div>
+                <div>Rotate X: <input id="0_rotateX" type="range" min="-180" max="180" value="0" oninput="update_rotate(0)"></div>
+                <div>Rotate Y: <input id="0_rotateY" type="range" min="-180" max="180" value="0" oninput="update_rotate(0)"></div>
+                <div>Rotate Z: <input id="0_rotateZ" type="range" min="-180" max="180" value="0" oninput="update_rotate(0)"></div>
+                <div>Scale X: <input id="0_scaleX" type="range" min="0.1" max="5" step="0.1" value="0.2" oninput="update_scale(0)"></div>
+                <div>Scale Y: <input id="0_scaleY" type="range" min="0.1" max="5" step="0.1" value="0.2" oninput="update_scale(0)"></div>
+                <div>Scale Z: <input id="0_scaleZ" type="range" min="0.1" max="5" step="0.1" value="0.2" oninput="update_scale(0)"></div>
+                <div>Shear X: <input id="0_shearX" type="range" min="45" max="135" value="90" oninput="update_shear(0)"></div>
+                <div>Shear Y: <input id="0_shearY" type="range" min="45" max="135" value="90" oninput="update_shear(0)"></div>
+                <div>Shear Z: <input id="0_shearZ" type="range" min="45" max="135" value="90" oninput="update_shear(0)"></div>
+                </div>
+            
+                <!-- Object 1 -->
+                <div style="min-width: 280px; margin: 10px;">
+                <strong>Object 1 Transform</strong>
+                <div>Trans X: <input id="1_transX" type="range" min="-50" max="50" value="15" oninput="update_trans(1)"></div>
+                <div>Trans Y: <input id="1_transY" type="range" min="-50" max="50" value="0" oninput="update_trans(1)"></div>
+                <div>Trans Z: <input id="1_transZ" type="range" min="-120" max="0" value="-37" oninput="update_trans(1)"></div>
+                <div>Rotate X: <input id="1_rotateX" type="range" min="-180" max="180" value="-90" oninput="update_rotate(1)"></div>
+                <div>Rotate Y: <input id="1_rotateY" type="range" min="-180" max="180" value="0" oninput="update_rotate(1)"></div>
+                <div>Rotate Z: <input id="1_rotateZ" type="range" min="-180" max="180" value="-50" oninput="update_rotate(1)"></div>
+                <div>Scale X: <input id="1_scaleX" type="range" min="0.1" max="5" step="0.1" value="2" oninput="update_scale(1)"></div>
+                <div>Scale Y: <input id="1_scaleY" type="range" min="0.1" max="5" step="0.1" value="2" oninput="update_scale(1)"></div>
+                <div>Scale Z: <input id="1_scaleZ" type="range" min="0.1" max="5" step="0.1" value="2" oninput="update_scale(1)"></div>
+                <div>Shear X: <input id="1_shearX" type="range" min="45" max="135" value="90" oninput="update_shear(1)"></div>
+                <div>Shear Y: <input id="1_shearY" type="range" min="45" max="135" value="90" oninput="update_shear(1)"></div>
+                <div>Shear Z: <input id="1_shearZ" type="range" min="45" max="135" value="90" oninput="update_shear(1)"></div>
+                </div>
+            
+                <!-- Object 2 -->
+                <div style="min-width: 280px; margin: 10px;">
+                <strong>Object 2 Transform</strong>
+                <div>Trans X: <input id="2_transX" type="range" min="-50" max="50" value="-15" oninput="update_trans(2)"></div>
+                <div>Trans Y: <input id="2_transY" type="range" min="-50" max="50" value="-1" oninput="update_trans(2)"></div>
+                <div>Trans Z: <input id="2_transZ" type="range" min="-120" max="0" value="-37" oninput="update_trans(2)"></div>
+                <div>Rotate X: <input id="2_rotateX" type="range" min="-180" max="180" value="-90" oninput="update_rotate(2)"></div>
+                <div>Rotate Y: <input id="2_rotateY" type="range" min="-180" max="180" value="0" oninput="update_rotate(2)"></div>
+                <div>Rotate Z: <input id="2_rotateZ" type="range" min="-180" max="180" value="-50" oninput="update_rotate(2)"></div>
+                <div>Scale X: <input id="2_scaleX" type="range" min="0.1" max="5" step="0.1" value="5" oninput="update_scale(2)"></div>
+                <div>Scale Y: <input id="2_scaleY" type="range" min="0.1" max="5" step="0.1" value="5" oninput="update_scale(2)"></div>
+                <div>Scale Z: <input id="2_scaleZ" type="range" min="0.1" max="5" step="0.1" value="5" oninput="update_scale(2)"></div>
+                <div>Shear X: <input id="2_shearX" type="range" min="45" max="135" value="90" oninput="update_shear(2)"></div>
+                <div>Shear Y: <input id="2_shearY" type="range" min="45" max="135" value="90" oninput="update_shear(2)"></div>
+                <div>Shear Z: <input id="2_shearZ" type="range" min="45" max="135" value="90" oninput="update_shear(2)"></div>
+                </div>
+            
+            </div>
+  
+            <div>
+                <label><input type="checkbox" id="enable_clip_x" onchange="toggleClipping('x')"> Enable X Clipping</label>
+                <input id="clip_x" type="range" min="-10" max="10" value="0" step="0.1" oninput="updateClipping('x')">
+              </div>
+        </div>
+    </div>
+</div>
+    </div>
 </body>
-</html>
